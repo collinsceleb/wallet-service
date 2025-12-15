@@ -4,7 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CreateWalletDto } from './dto/create-wallet.dto';
-import { UpdateWalletDto } from './dto/update-wallet.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Wallet } from './entities/wallet.entity';
 import { Repository } from 'typeorm';
@@ -27,10 +26,6 @@ export class WalletsService {
         error.message,
       );
     }
-  }
-
-  findAll() {
-    return `This action returns all wallets`;
   }
 
   async getWalletDetails(id: string, page?: string, limit?: string) {
@@ -73,13 +68,5 @@ export class WalletsService {
         error.message,
       );
     }
-  }
-
-  update(id: number, updateWalletDto: UpdateWalletDto) {
-    return `This action updates a #${id} wallet`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} wallet`;
   }
 }
