@@ -6,14 +6,19 @@ config();
 
 const configService = new ConfigService();
 
+const isCompiled = __filename.endsWith('.js');
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
   url: configService.get('DATABASE_URL'),
-  entities: [__dirname + '/**/*.entity{.ts,.js}'],
-  migrations: [__dirname + '/migrations/*{.ts,.js}'],
+  entities: isCompiled
+    ? [__dirname + '/**/*.entity.js']
+    : [__dirname + '/src/**/*.entity.ts'],
+  migrations: isCompiled
+    ? [__dirname + '/migrations/*.js']
+    : [__dirname + '/migrations/*.ts'],
 });
 
-// Initialize the data source
 AppDataSource.initialize()
   .then(() => {
     console.log('Data Source has been initialized!');
