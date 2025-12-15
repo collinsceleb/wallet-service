@@ -59,6 +59,9 @@ export class Transaction {
   @Column({ name: 'idempotency_key', type: 'varchar', nullable: true })
   idempotencyKey?: string;
 
+  @Column({ name: 'transfer_id', type: 'uuid', nullable: true })
+  transferId?: string;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
