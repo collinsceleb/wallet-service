@@ -47,7 +47,7 @@ export class TransactionsService {
 
       const newTransaction = queryRunner.manager.create(Transaction, {
         transactionType: TransactionType.FUND,
-        balance: amount,
+        amount: amount,
         wallet: existingWallet,
         idempotencyKey: idempotencyKey,
       });
@@ -58,8 +58,8 @@ export class TransactionsService {
         const savedWallet = await queryRunner.manager.save(existingWallet);
         await queryRunner.commitTransaction();
         return { transaction: savedTransaction, wallet: savedWallet };
-      } catch (err: any) {
-        if (err?.code === '23505' && idempotencyKey) {
+      } catch (error: any) {
+        if (error?.code === '23505' && idempotencyKey) {
           await queryRunner.rollbackTransaction();
           const existingTransaction = await this.dataSource
             .getRepository(Transaction)
@@ -72,7 +72,7 @@ export class TransactionsService {
             .findOne({ where: { id: walletId } });
           return { transaction: existingTransaction, wallet: freshWallet };
         }
-        throw err;
+        throw error;
       }
     } catch (error) {
       if (queryRunner.isTransactionActive) {
@@ -234,13 +234,13 @@ export class TransactionsService {
     receiverWalletId: string,
     amount: number,
   ) {
-    const ids = [senderWalletId, receiverWalletId].sort((a, b) =>
+    const walletIds = [senderWalletId, receiverWalletId].sort((a, b) =>
       a.localeCompare(b),
     );
     const wallets = await queryRunner.manager
       .createQueryBuilder(Wallet, 'wallet')
       .setLock('pessimistic_write')
-      .where('wallet.id IN (:...ids)', { ids })
+      .where('wallet.id IN (:...ids)', { walletIds })
       .getMany();
 
     const sender = wallets.find(
@@ -265,22 +265,22 @@ export class TransactionsService {
     amount: number,
     transferId?: string,
   ) {
-    const debitTx = queryRunner.manager.create(Transaction, {
+    const debitTransaction = queryRunner.manager.create(Transaction, {
       transactionType: TransactionType.TRANSFER,
-      balance: -amount,
+      amount: -amount,
       wallet: sender,
       transferId: transferId,
     });
-    const creditTx = queryRunner.manager.create(Transaction, {
+    const creditTransaction = queryRunner.manager.create(Transaction, {
       transactionType: TransactionType.TRANSFER,
-      balance: amount,
+      amount: amount,
       wallet: receiver,
       transferId: transferId,
     });
 
     const [savedDebit, savedCredit] = await Promise.all([
-      queryRunner.manager.save(debitTx),
-      queryRunner.manager.save(creditTx),
+      queryRunner.manager.save(debitTransaction),
+      queryRunner.manager.save(creditTransaction),
     ]);
 
     sender.balance -= amount;

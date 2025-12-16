@@ -28,7 +28,7 @@ export class Transaction {
   id: string;
 
   @Column('decimal', {
-    name: 'balance',
+    name: 'amount',
     precision: 12,
     scale: 2,
     default: 0,
@@ -37,7 +37,7 @@ export class Transaction {
       from: (value: string) => Number.parseFloat(value),
     },
   })
-  balance: number;
+  amount: number;
 
   @Column({
     type: 'enum',
