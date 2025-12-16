@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { DataSource } from 'typeorm';
@@ -12,6 +13,7 @@ import { TransferTransactionDto } from './dto/transfer-transaction.dto';
 
 @Injectable()
 export class TransactionsService {
+  private readonly logger = new Logger(TransactionsService.name);
   constructor(private readonly dataSource: DataSource) {}
   async fundWallet(createTransactionDto: CreateTransactionDto) {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -74,14 +76,15 @@ export class TransactionsService {
         }
         throw error;
       }
-    } catch (error) {
+    } catch (error: any) {
       if (queryRunner.isTransactionActive) {
         await queryRunner.rollbackTransaction();
       }
-      throw new InternalServerErrorException(
+      this.logger.error(
         'Failed to fund wallet',
-        error?.message,
+        error?.stack || error?.message,
       );
+      throw new InternalServerErrorException('Failed to fund wallet');
     } finally {
       await queryRunner.release();
     }
@@ -141,14 +144,15 @@ export class TransactionsService {
 
       await queryRunner.commitTransaction();
       return result;
-    } catch (error) {
+    } catch (error: any) {
       if (queryRunner.isTransactionActive) {
         await queryRunner.rollbackTransaction();
       }
-      throw new InternalServerErrorException(
+      this.logger.error(
         'Failed to transfer funds',
-        error?.message,
+        error?.stack || error?.message,
       );
+      throw new InternalServerErrorException('Failed to transfer funds');
     } finally {
       await queryRunner.release();
     }
@@ -190,6 +194,10 @@ export class TransactionsService {
           receiverWalletId,
         );
       }
+      this.logger.error(
+        'Error reserving transfer idempotency',
+        err?.stack || err?.message,
+      );
       throw err;
     }
   }
@@ -225,6 +233,9 @@ export class TransactionsService {
       }
       await new Promise((r) => setTimeout(r, 100));
     }
+    this.logger.warn(
+      `Transfer idempotency timed out or incomplete for key ${idempotencyKey}`,
+    );
     throw new InternalServerErrorException('Transfer is already in progress');
   }
 
@@ -240,7 +251,7 @@ export class TransactionsService {
     const wallets = await queryRunner.manager
       .createQueryBuilder(Wallet, 'wallet')
       .setLock('pessimistic_write')
-      .where('wallet.id IN (:...ids)', { walletIds })
+      .where('wallet.id IN (:...ids)', { ids: walletIds })
       .getMany();
 
     const sender = wallets.find(

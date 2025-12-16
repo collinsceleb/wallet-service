@@ -1,6 +1,7 @@
 import {
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CreateWalletDto } from './dto/create-wallet.dto';
@@ -11,6 +12,7 @@ import { Transaction } from '../transactions/entities/transaction.entity';
 
 @Injectable()
 export class WalletsService {
+  private readonly logger = new Logger(WalletsService.name);
   constructor(
     @InjectRepository(Wallet)
     private readonly walletRepository: Repository<Wallet>,
@@ -21,6 +23,10 @@ export class WalletsService {
       const wallet = this.walletRepository.create(createWalletDto);
       return this.walletRepository.save(wallet);
     } catch (error) {
+      this.logger.error(
+        'Failed to create wallet',
+        error?.stack || error?.message,
+      );
       throw new InternalServerErrorException(
         'Failed to create wallet',
         error.message,
@@ -63,6 +69,10 @@ export class WalletsService {
         },
       };
     } catch (error) {
+      this.logger.error(
+        'Failed to fetch wallet',
+        error?.stack || error?.message,
+      );
       throw new InternalServerErrorException(
         'Failed to fetch wallet',
         error.message,
