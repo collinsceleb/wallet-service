@@ -1,8 +1,8 @@
-##Wallet Service API
+## Wallet Service API
 
 ## Description
 
-[Nest](https://github.com/collinsceleb/wallet-service) framework TypeScript starter repository.
+[Wallet Service ](https://github.com/collinsceleb/wallet-service) API TypeScript repository.
 
 ## Installation
 
