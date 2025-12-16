@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WalletsModule } from './modules/wallets/wallets.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
+import { DbErrorMapperService } from './common/db-error-mapper.service';
 
 @Module({
   imports: [
@@ -28,6 +29,6 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
     TransactionsModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [DbErrorMapperService],
 })
 export class AppModule {}

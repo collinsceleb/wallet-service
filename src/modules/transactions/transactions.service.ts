@@ -4,7 +4,9 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  HttpException,
 } from '@nestjs/common';
+import { DbErrorMapperService } from '../../common/db-error-mapper.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { DataSource } from 'typeorm';
 import { Wallet } from '../wallets/entities/wallet.entity';
@@ -14,7 +16,10 @@ import { TransferTransactionDto } from './dto/transfer-transaction.dto';
 @Injectable()
 export class TransactionsService {
   private readonly logger = new Logger(TransactionsService.name);
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly dbErrorMapper: DbErrorMapperService,
+  ) {}
   async fundWallet(createTransactionDto: CreateTransactionDto) {
     const queryRunner = this.dataSource.createQueryRunner();
     try {
@@ -100,19 +105,14 @@ export class TransactionsService {
 
       this.validateTransferRequest(amount, senderWalletId, receiverWalletId);
 
-      let reservedTransferId: string | undefined;
-      if (idempotencyKey) {
-        const idempotencyOutcome = await this.handleIdempotency(
-          queryRunner,
-          idempotencyKey,
-          senderWalletId,
-          receiverWalletId,
-        );
-        if (idempotencyOutcome && typeof idempotencyOutcome === 'object')
-          return idempotencyOutcome;
-        if (idempotencyOutcome && typeof idempotencyOutcome === 'string')
-          reservedTransferId = idempotencyOutcome;
-      }
+      const reservedTransferId = await this.processIdempotency(
+        queryRunner,
+        idempotencyKey,
+        senderWalletId,
+        receiverWalletId,
+      );
+
+      if (typeof reservedTransferId === 'object') return reservedTransferId;
 
       const { sender, receiver } = await this.fetchAndValidateWallets(
         queryRunner,
@@ -120,6 +120,7 @@ export class TransactionsService {
         receiverWalletId,
         amount,
       );
+
       const result = await this.executeTransfer(
         queryRunner,
         sender,
@@ -128,26 +129,19 @@ export class TransactionsService {
         reservedTransferId,
       );
 
-      if (idempotencyKey) {
-        if (reservedTransferId) {
-          await queryRunner.query(
-            `UPDATE transfers SET debit_id = $1, credit_id = $2 WHERE id = $3`,
-            [result.debit.id, result.credit.id, reservedTransferId],
-          );
-        } else {
-          await queryRunner.query(
-            `UPDATE transfers SET debit_id = $1, credit_id = $2 WHERE idempotency_key = $3`,
-            [result.debit.id, result.credit.id, idempotencyKey],
-          );
-        }
-      }
-
+      await this.updateIdempotencyRecord(
+        queryRunner,
+        idempotencyKey,
+        reservedTransferId,
+        result,
+      );
       await queryRunner.commitTransaction();
       return result;
     } catch (error: any) {
       if (queryRunner.isTransactionActive) {
         await queryRunner.rollbackTransaction();
       }
+      if (error instanceof HttpException) throw error;
       this.logger.error(
         'Failed to transfer funds',
         error?.stack || error?.message,
@@ -156,6 +150,43 @@ export class TransactionsService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  private async processIdempotency(
+    queryRunner: any,
+    idempotencyKey: string | undefined,
+    senderWalletId: string,
+    receiverWalletId: string,
+  ) {
+    if (!idempotencyKey) return undefined;
+
+    const idempotencyOutcome = await this.handleIdempotency(
+      queryRunner,
+      idempotencyKey,
+      senderWalletId,
+      receiverWalletId,
+    );
+
+    return idempotencyOutcome;
+  }
+
+  private async updateIdempotencyRecord(
+    queryRunner: any,
+    idempotencyKey: string | undefined,
+    reservedTransferId: string | undefined,
+    result: any,
+  ) {
+    if (!idempotencyKey) return;
+
+    const updateQuery = reservedTransferId
+      ? `UPDATE transfers SET debit_id = $1, credit_id = $2 WHERE id = $3`
+      : `UPDATE transfers SET debit_id = $1, credit_id = $2 WHERE idempotency_key = $3`;
+
+    const params = reservedTransferId
+      ? [result.debit.id, result.credit.id, reservedTransferId]
+      : [result.debit.id, result.credit.id, idempotencyKey];
+
+    await queryRunner.query(updateQuery, params);
   }
 
   private validateTransferRequest(
@@ -194,6 +225,13 @@ export class TransactionsService {
           receiverWalletId,
         );
       }
+      const mapped = this.dbErrorMapper.map(err);
+      if (mapped) {
+        this.logger.warn(
+          'Mapped DB error to HTTP error during idempotency reservation',
+        );
+        throw mapped;
+      }
       this.logger.error(
         'Error reserving transfer idempotency',
         err?.stack || err?.message,
@@ -209,34 +247,77 @@ export class TransactionsService {
     receiverWalletId: string,
   ) {
     for (let i = 0; i < 10; i++) {
-      const rows: any[] = await queryRunner.query(
-        `SELECT debit_id, credit_id FROM transfers WHERE idempotency_key = $1`,
-        [idempotencyKey],
-      );
+      const rows = await this.queryTransferRecord(queryRunner, idempotencyKey);
       const record = rows[0];
+
       if (record?.debit_id && record?.credit_id) {
-        const [debit, credit, sender, receiver] = await Promise.all([
-          this.dataSource
-            .getRepository(Transaction)
-            .findOne({ where: { id: record.debit_id } }),
-          this.dataSource
-            .getRepository(Transaction)
-            .findOne({ where: { id: record.credit_id } }),
-          this.dataSource
-            .getRepository(Wallet)
-            .findOne({ where: { id: senderWalletId } }),
-          this.dataSource
-            .getRepository(Wallet)
-            .findOne({ where: { id: receiverWalletId } }),
-        ]);
-        return { debit, credit, sender, receiver };
+        return await this.fetchTransferEntities(
+          record,
+          senderWalletId,
+          receiverWalletId,
+        );
       }
+
       await new Promise((r) => setTimeout(r, 100));
     }
+
     this.logger.warn(
       `Transfer idempotency timed out or incomplete for key ${idempotencyKey}`,
     );
-    throw new InternalServerErrorException('Transfer is already in progress');
+    throw new BadRequestException('Transfer is already in progress');
+  }
+
+  private async queryTransferRecord(
+    queryRunner: any,
+    idempotencyKey: string,
+  ): Promise<any[]> {
+    try {
+      return await queryRunner.query(
+        `SELECT debit_id, credit_id FROM transfers WHERE idempotency_key = $1`,
+        [idempotencyKey],
+      );
+    } catch (err: any) {
+      this.handleTransferQueryError(err);
+      throw err;
+    }
+  }
+
+  private handleTransferQueryError(err: any): void {
+    const mapped = this.dbErrorMapper.map(err);
+    if (mapped) {
+      this.logger.error(
+        'Mapped DB error while checking existing transfer',
+        err?.stack || err?.message,
+      );
+      throw mapped;
+    }
+    const msg = String(err?.message || err);
+    this.logger.error(
+      'Error checking existing transfer for idempotency',
+      err?.stack || msg,
+    );
+  }
+
+  private async fetchTransferEntities(
+    record: any,
+    senderWalletId: string,
+    receiverWalletId: string,
+  ) {
+    const [debit, credit, sender, receiver] = await Promise.all([
+      this.dataSource
+        .getRepository(Transaction)
+        .findOne({ where: { id: record.debit_id } }),
+      this.dataSource
+        .getRepository(Transaction)
+        .findOne({ where: { id: record.credit_id } }),
+      this.dataSource
+        .getRepository(Wallet)
+        .findOne({ where: { id: senderWalletId } }),
+      this.dataSource
+        .getRepository(Wallet)
+        .findOne({ where: { id: receiverWalletId } }),
+    ]);
+    return { debit, credit, sender, receiver };
   }
 
   private async fetchAndValidateWallets(

@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { DbErrorMapperService } from '../../common/db-error-mapper.service';
 import { CreateWalletDto } from './dto/create-wallet.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Wallet } from './entities/wallet.entity';
@@ -16,20 +17,29 @@ export class WalletsService {
   constructor(
     @InjectRepository(Wallet)
     private readonly walletRepository: Repository<Wallet>,
+    private readonly dbErrorMapper: DbErrorMapperService,
   ) {}
 
-  create(createWalletDto: CreateWalletDto) {
+  async createWallet(createWalletDto: CreateWalletDto) {
     try {
       const wallet = this.walletRepository.create(createWalletDto);
       return this.walletRepository.save(wallet);
-    } catch (error) {
+    } catch (error: any) {
+      const mapped = this.dbErrorMapper.map(error);
+      if (mapped) {
+        this.logger.warn(
+          'Mapped DB error while creating wallet',
+          error?.stack || error?.message,
+        );
+        throw mapped;
+      }
       this.logger.error(
-        'Failed to create wallet',
+        'Error while trying to create wallet',
         error?.stack || error?.message,
       );
       throw new InternalServerErrorException(
-        'Failed to create wallet',
-        error.message,
+        'Error while trying to create wallet',
+        error?.stack || error?.message,
       );
     }
   }
@@ -40,10 +50,13 @@ export class WalletsService {
       const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
       const offset = (pageNum - 1) * limitNum;
 
-      const existingWallet = await this.walletRepository.findOne({ where: { id } });
+      const existingWallet = await this.walletRepository.findOne({
+        where: { id },
+      });
       if (!existingWallet) throw new NotFoundException('Wallet not found');
 
-      const transactionRepository = this.walletRepository.manager.getRepository(Transaction);
+      const transactionRepository =
+        this.walletRepository.manager.getRepository(Transaction);
       const [transactions, total] = await transactionRepository
         .createQueryBuilder('transaction')
         .where('transaction.wallet_id = :id', { id })
@@ -68,14 +81,22 @@ export class WalletsService {
           pages: Math.ceil(total / limitNum),
         },
       };
-    } catch (error) {
+    } catch (error: any) {
+      const mapped = this.dbErrorMapper.map(error);
+      if (mapped) {
+        this.logger.warn(
+          'Mapped DB error while fetching wallet',
+          error?.stack || error?.message,
+        );
+        throw mapped;
+      }
       this.logger.error(
-        'Failed to fetch wallet',
+        'Error while trying to fetch wallet',
         error?.stack || error?.message,
       );
       throw new InternalServerErrorException(
-        'Failed to fetch wallet',
-        error.message,
+        'Error while trying to fetch wallet',
+        error?.stack || error?.message,
       );
     }
   }
