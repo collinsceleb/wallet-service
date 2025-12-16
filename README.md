@@ -46,3 +46,10 @@ $ npx typeorm-ts-node-commonjs migration:generate -d ./typeOrm.config.ts ./migra
 # Run Migration
 $ npx typeorm-ts-node-commonjs migration:run -d ./typeOrm.config.ts
 ```
+
+## Data Integrity
+- Transfers are executed inside database transactions
+- Pessimistic row locking prevents race conditions
+- Enusure wallet balances cannot go negative
+- Idempotency is added on fund/transfer operation
+
